@@ -1,0 +1,20 @@
+{
+  "model_name_or_path": "outputs/full/trial_1/checkpoint-43842",
+  "cache_dir": "cache",
+  "test_file": "wizard_of_wikipedia/synthetic_data/inpainting_source.json",
+  "output_dir": "wizard_of_wikipedia/synthetic_data",
+  "do_predict": true,
+  "per_device_eval_batch_size": 64,
+  "max_source_length": 1000,
+  "max_target_length": 500,
+  "generation_max_length": 500,
+  "predict_with_generate": true,
+  "overwrite_output_dir": true,
+  "special_tokens": "[prompt] [user-1] [user-2] [mask] [/mask] [grounding] [/grounding] [none] [session] [no_query]",
+  "top_k": 70,
+  "temperature": 0.7,
+  "do_sample": true,
+  "generation_num_beams": 1,
+  "encoder_no_repeat_ngram_size": 9,
+  "num_turns": 5
+}
