@@ -15,7 +15,7 @@ pip install -r requirements.txt
 
 #### WoW
 
-1. Prepare the data for training the dialogue content realization model. The resulting files are saved in 'full_training_inp_data'.
+1. Prepare the data for training the dialogue content realization model. The resulting files are saved in 'full_training_inp_data'. (Please first download the original WoW dataset, and save it in ./wizard_of_wikipedia)
 
 ```sh
 python get_training_inp_data.py --dataset wow
