@@ -1,0 +1,19 @@
+{
+    "model_name_or_path": "outputs/full/pc/checkpoint-32858",
+    "cache_dir": "cache",
+    "test_file": "persona_chat/synthetic_data/inpainting_source.json",
+    "output_dir": "persona_chat/synthetic_data",
+    "m": "1",
+    "do_predict": true,
+    "per_device_eval_batch_size": 64,
+    "generation_max_length": 500,
+    "predict_with_generate": true,
+    "overwrite_output_dir": true,
+    "special_tokens": "[prompt] [user-1] [user-2] [mask] [/mask] [grounding] [/grounding] [none]",
+    "num_turns": 16,
+    "top_k": 70,
+    "temperature": 0.7,
+    "do_sample": true,
+    "generation_num_beams": 1
+  }
+  
