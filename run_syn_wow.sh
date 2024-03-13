@@ -5,4 +5,4 @@ export WANDB_DISABLED=1
 
 python \
     synthesize.py \
-    exp_config/syn_config.json
+    exp_config/syn_config_wow.json
