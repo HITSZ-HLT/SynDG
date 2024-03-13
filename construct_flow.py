@@ -7,9 +7,7 @@ from collections import defaultdict
 from tqdm import tqdm
 import numpy as np
 import os
-
-prompt = '[prompt] The following is a knowledge-grounded dialogue. Two users chat according to the given knowledge.'
-
+import argparse
 
 def sample_flow(orig_data_path, num_sampled_flows=None):
 
@@ -100,6 +98,8 @@ def sample_flow(orig_data_path, num_sampled_flows=None):
     return sampled_flows
 
 def format_sampled_flow_for_inp(sampled_flows_file, save_inp_source_file, m=2):
+    prompt = '[prompt] The following is a knowledge-grounded dialogue. Two users chat according to the given knowledge.'
+
     with open(sampled_flows_file, 'r') as fp:
         flows = json.load(fp)
     
@@ -261,22 +261,186 @@ def format_gen_dial_for_new_training_data_with_score(num_sampled_flows=None):
         with open(output_file, 'w') as f:
             json.dump(formatted_gen_dials, f, indent=4)
 
-if __name__ == '__main__':
+EXP_NUM = 3
+PERSONAS_NUM = 5
+TOTAL_PERSONAS_NUM= 20000
+TURNS_NUM = 8
+GROUNDED_TURN_RATIO = 0.5
+MORE_THAN_ONE_PERSONA_RATIO = 0.1
+MAX_PERSONA_SAMPLED_TIME = 2
 
-    # preprocess for inpainting
-    # NUM_SAMPLED_FLOWS = 2000
-    NUM_SAMPLED_FLOWS = None
-    orig_data_path = f'wizard_of_wikipedia/train_shuffled.json'
-    save_path = f'wizard_of_wikipedia/synthetic_data/sampled_flows.json'
+def sample_personas():
+    with open('persona_chat/train_both_original_grounded.json', 'r') as fp:
+        dialogue_dict_list = json.load(fp)
+
+    all_persona_set = set()
+
+    for dialogue in dialogue_dict_list:
+        persona_set = set(dialogue['user_personas'] + dialogue['agent_personas'])
+        all_persona_set = all_persona_set | persona_set
+    all_persona_set = list(all_persona_set)
+
+    sampled_personas = []
+    sampled_personas_str_set = set()
+
+    while len(sampled_personas) < TOTAL_PERSONAS_NUM:
+        personas = random.sample(all_persona_set, PERSONAS_NUM)
+        sorted_personas = sorted(personas)
+        sorted_personas_str = ' '.join(sorted_personas)
+        if sorted_personas_str not in sampled_personas_str_set:
+            sampled_personas_str_set.add(sorted_personas_str)
+            sampled_personas.append(sorted_personas)
+
+    save_path = f'persona_chat/synthetic_data/sampled_personas.json'
     if not os.path.exists(os.path.dirname(save_path)):
         os.makedirs(os.path.dirname(save_path))
-    sampled_flows_1 = sample_flow(orig_data_path, NUM_SAMPLED_FLOWS)
-    sampled_flows_2 = sample_flow(orig_data_path, NUM_SAMPLED_FLOWS)
-    sampled_flows = sampled_flows_1 + sampled_flows_2
-    print(len(sampled_flows))
     with open(save_path, 'w') as fp:
-        json.dump(sampled_flows, fp, indent=4)
+        json.dump(sampled_personas, fp, indent=4)
+
+
+def sample_flow_pc(turn_num, cand_personas):
+    sampled_persona_cnt = defaultdict(int)
+    dialogue_flow = []
+    not_grounded_num = 0
+    for j in range(turn_num):
+        is_grounded = random.random() > GROUNDED_TURN_RATIO
+        is_one_persona = random.random() > MORE_THAN_ONE_PERSONA_RATIO
+        # # if last utterance is not grounded, this utterance must be grounded
+        # if pre_is_grounded == False:
+        #     is_grounded = True
+        # pre_is_grounded = is_grounded
+        # if last two utterance is not grounded, this utterance must be grounded
+        if not_grounded_num == 2:
+            is_grounded = True
+            not_grounded_num = 0
+        if not is_grounded:
+            not_grounded_num += 1
+        else:
+            not_grounded_num = 0
+        if is_grounded:
+            if (not is_one_persona and len(cand_personas) > 1):
+                personas = random.sample(cand_personas, 2)
+            else:
+                personas = random.sample(cand_personas, 1) if len(cand_personas) > 0 else []
+        else:
+            personas = []
+        for persona in personas:
+            sampled_persona_cnt[persona]+=1
+            if sampled_persona_cnt[persona] >= MAX_PERSONA_SAMPLED_TIME:
+                cand_personas.remove(persona)
+        dialogue_flow.append(personas)
+    return dialogue_flow
+
+def construct_dialogue_flow():
+    with open(f'persona_chat/synthetic_data/sampled_personas.json', 'r') as fp:
+        sampled_personas = json.load(fp)
+
+    # get persona pairs, each dialogue contains two persons, for (TOTAL_PERSONAS_NUM/2) dialogues
+    dialogue_num = TOTAL_PERSONAS_NUM//2
+    persona_pairs = []
+    for i in range(0, TOTAL_PERSONAS_NUM, 2):
+        persona_pairs.append((sampled_personas[i], sampled_personas[i+1]))
     
-    sampled_flows_file = save_path
-    save_inp_source_file = f'wizard_of_wikipedia/synthetic_data/inpainting_source.json'
-    format_sampled_flow_for_inp(sampled_flows_file, save_inp_source_file)
+    # sample dialogue_flows
+    
+    dialogue_flows = []
+    for i in range(dialogue_num):
+        dialogue_flow = {'user_flow': [], 'agent_flow': []}
+        user_personas = persona_pairs[i][0]
+        agent_personas = persona_pairs[i][1]
+        dialogue_flow['user_flow'] = sample_flow_pc(TURNS_NUM, deepcopy(user_personas))
+        dialogue_flow['agent_flow'] = sample_flow_pc(TURNS_NUM, deepcopy(agent_personas))
+        dialogue_flow['user_personas'] = user_personas
+        dialogue_flow['agent_personas'] = agent_personas
+        dialogue_flows.append(dialogue_flow)
+
+    with open(f'persona_chat/synthetic_data/sampled_flows.json', 'w') as fp:
+        json.dump(dialogue_flows, fp, indent=4)
+
+
+def format_dialogue_flow(m):
+    prompt = '[prompt] The following is a persona-based dialogue. Two users chat according to their personas or profile information.'
+
+    with open(f'persona_chat/synthetic_data/sampled_flows.json', 'r') as fp:
+        dialogue_flows = json.load(fp)
+    input_dict = {'source': [], 'user_flow': [], 'agent_flow': [], 'agent_personas': [], 'user_personas': []}
+    for dialogue_flow in tqdm(dialogue_flows):
+        user_flow = dialogue_flow['user_flow']
+        agent_flow = dialogue_flow['agent_flow']
+        input_dict['user_flow'].append(user_flow)
+        input_dict['agent_flow'].append(agent_flow)
+        agent_personas = ' | '.join(dialogue_flow['agent_personas'])
+        user_personas = ' | '.join(dialogue_flow['user_personas'])
+
+        all_flow = [None]*(len(user_flow)+len(agent_flow))
+        all_flow[::2] = user_flow
+        all_flow[1::2] = agent_flow
+
+        grounding_list = []
+        cur_grounding = '[mask] [grounding] ' + (user_personas if len(all_flow[0])==0 else ' | '.join(all_flow[0])) + ' [/grounding] [/mask]'
+        grounding_list.append(cur_grounding)
+        # source_start = f'{prompt} {user_grounding}'
+
+        for i in range(1, m+1):
+            following_grounding = '[grounding] ' + ('[none]' if len(all_flow[i])==0 else ' | '.join(all_flow[i])) + ' [/grounding]'
+            grounding_list.append(following_grounding)
+        
+        source_start = f'{prompt}'
+        for i, grounding in enumerate(grounding_list):
+            user_token = '[user-1]' if i%2==0 else '[user-2]'
+            source_start = f'{source_start} {user_token} {grounding}'
+
+        # agent_grounding = '[user-2] ' + '[grounding] ' + ('[none]' if len(agent_flow[0])==0 else ' | '.join(agent_flow[0])) + ' [/grounding]'
+        # user_grounding = '[user-1] ' + '[mask] [grounding] ' + (user_personas if len(user_flow[0])==0 else ' | '.join(user_flow[0])) + ' [/grounding] [/mask]'
+        # source_start = f'{prompt} {user_grounding} {agent_grounding}'
+        input_dict['source'].append(source_start)
+        input_dict['agent_personas'].append(agent_personas)
+        input_dict['user_personas'].append(user_personas)
+
+    
+    # get first ungrounded utterance
+    # get ungrounded_first_utt_pool
+    ungrounded_first_utt_pool = set()
+    with open('persona_chat/train_both_original_grounded.json', 'r') as fp:
+        dialogue_dict_list = json.load(fp)
+    for d in dialogue_dict_list:
+        if len(d['user_grounded_personas'][0]) == 0:
+            ungrounded_first_utt_pool.add(d['user_utterances'][0])
+    ungrounded_first_utt_pool = list(ungrounded_first_utt_pool)
+    # sample first utterance
+    first_utts = [random.choice(ungrounded_first_utt_pool) for i in range(len(input_dict['source']))]
+    input_dict['first_utterance'] = first_utts
+
+    input_dict = [dict(zip(input_dict,t)) for t in zip(*input_dict.values())]
+    with open(f'persona_chat/synthetic_data/inpainting_source.json', 'w') as f:
+        json.dump(input_dict, f, indent=4)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', type=str, choices=['wow', 'pc'], required=True)
+    args = parser.parse_args()
+
+
+    if args.dataset == 'wow':
+        # preprocess for inpainting
+        # NUM_SAMPLED_FLOWS = 2000
+        NUM_SAMPLED_FLOWS = None
+        orig_data_path = f'wizard_of_wikipedia/train_shuffled.json'
+        save_path = f'wizard_of_wikipedia/synthetic_data/sampled_flows.json'
+        if not os.path.exists(os.path.dirname(save_path)):
+            os.makedirs(os.path.dirname(save_path))
+        sampled_flows_1 = sample_flow(orig_data_path, NUM_SAMPLED_FLOWS)
+        sampled_flows_2 = sample_flow(orig_data_path, NUM_SAMPLED_FLOWS)
+        sampled_flows = sampled_flows_1 + sampled_flows_2
+        print(len(sampled_flows))
+        with open(save_path, 'w') as fp:
+            json.dump(sampled_flows, fp, indent=4)
+        
+        sampled_flows_file = save_path
+        save_inp_source_file = f'wizard_of_wikipedia/synthetic_data/inpainting_source.json'
+        format_sampled_flow_for_inp(sampled_flows_file, save_inp_source_file)
+    elif args.dataset == 'pc':
+        sample_personas()
+        construct_dialogue_flow()
+        format_dialogue_flow(1)
+
