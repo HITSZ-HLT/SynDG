@@ -36,6 +36,9 @@ MULTILINGUAL_TOKENIZERS = [MBartTokenizer, MBartTokenizerFast, MBart50Tokenizer,
 from train_config import ModelArguments, DataTrainingArguments
 
 def main():
+    dataset_name = os.getenv('DATASET_NAME')
+    if not dataset_name:
+        raise ValueError("Environment variable DATASET_NAME not set")
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
@@ -143,7 +146,6 @@ def main():
     embedding_size = model.get_input_embeddings().weight.shape[0]
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
-
 
     # Temporarily set max_target_length for training.
     max_target_length = data_args.max_target_length
@@ -269,55 +271,127 @@ def main():
             predict_results.predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
         )
         predictions = [pred.strip() for pred in predictions]
-        predictions = list(map(postprocess, predictions))
-
-        for turn in range(1, data_args.num_turns*2):
-            logger.info(f"*** Inpainting turn {turn} ... ***")
-            preprocess_function = get_preprocess_function_inp_each_turn(tokenizer, data_args, turn, predictions, padding)
-            predict_dataset = predict_dataset.map(
-                preprocess_function,
-                with_indices=True,
-                batched=False,
-                # num_proc=data_args.preprocessing_num_workers,
-                # remove_columns=column_names,
-                load_from_cache_file=False,
-                # desc="Running tokenizer on inpainting dataset",
-            )
-            predict_results = trainer.predict(
-                predict_dataset, metric_key_prefix="predict", **gen_kwargs
-            )
-            predictions = tokenizer.batch_decode(
-                predict_results.predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
-            )
-            predictions = [pred.strip() for pred in predictions]
+        if dataset_name == 'wow':
             predictions = list(map(postprocess, predictions))
-        
-        preprocess_function = get_preprocess_function_inp_each_turn(tokenizer, data_args, data_args.num_turns*2, predictions, padding)
-        predict_dataset = predict_dataset.map(
-                preprocess_function,
-                with_indices=True,
-                batched=False,
-                # num_proc=data_args.preprocessing_num_workers,
-                # remove_columns=column_names,
-                load_from_cache_file=False,
-                # desc="Running tokenizer on inpainting dataset",
-            )
-        
-        gen_dial_strs = predict_dataset['source']
-        gen_dial_strs = [dial[:dial.rfind('[user-1] [mask] [grounding]')].strip() for dial in gen_dial_strs]
 
-        with open(data_args.test_file, 'r') as f:
-            inp_json = json.load(f)
-        for idx, d in enumerate(inp_json):
-            gen_dial_str = gen_dial_strs[idx]
-            sessions = gen_dial_str.split(' [user-1] ')[1:]
-            u1_utts = [sess.split(' [user-2] ')[0].strip() for sess in sessions]
-            u2_utts = [sess.split(' [user-2] ')[1].strip() for sess in sessions]
-            d['u1_utts'] = u1_utts
-            d['u2_utts'] = u2_utts
-        output_prediction_file = os.path.join(training_args.output_dir, "generated_predictions.json")
-        with open(output_prediction_file, "w") as f:
-            json.dump(inp_json, f, indent=4)
+        if dataset_name == 'wow':
+            for turn in range(1, data_args.num_turns*2):
+                logger.info(f"*** Inpainting turn {turn} ... ***")
+                preprocess_function = get_preprocess_function_inp_each_turn(tokenizer, data_args, turn, predictions, padding)
+                predict_dataset = predict_dataset.map(
+                    preprocess_function,
+                    with_indices=True,
+                    batched=False,
+                    # num_proc=data_args.preprocessing_num_workers,
+                    # remove_columns=column_names,
+                    load_from_cache_file=False,
+                    # desc="Running tokenizer on inpainting dataset",
+                )
+                predict_results = trainer.predict(
+                    predict_dataset, metric_key_prefix="predict", **gen_kwargs
+                )
+                predictions = tokenizer.batch_decode(
+                    predict_results.predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
+                )
+                predictions = [pred.strip() for pred in predictions]
+                predictions = list(map(postprocess, predictions))
+            
+            preprocess_function = get_preprocess_function_inp_each_turn(tokenizer, data_args, data_args.num_turns*2, predictions, padding)
+        elif dataset_name == 'pc':
+            for turn in range(1, data_args.num_turns):
+                logger.info(f"*** Inpainting turn {turn} ... ***")
+                preprocess_function = get_preprocess_function_inp_each_turn(tokenizer, data_args, turn, predictions, padding, data_args.m)
+                predict_dataset = predict_dataset.map(
+                    preprocess_function,
+                    with_indices=True,
+                    batched=False,
+                    # num_proc=data_args.preprocessing_num_workers,
+                    # remove_columns=column_names,
+                    load_from_cache_file=False,
+                    # desc="Running tokenizer on inpainting dataset",
+                )
+                predict_results = trainer.predict(
+                    predict_dataset, metric_key_prefix="predict", **gen_kwargs
+                )
+                predictions = tokenizer.batch_decode(
+                    predict_results.predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True
+                )
+                predictions = [pred.strip() for pred in predictions]
+
+            preprocess_function = get_preprocess_function_inp_each_turn(tokenizer, data_args, turn+1, predictions, padding, data_args.m)
+        else:
+            raise ValueError(f"Dataset {dataset_name} not supported")
+        predict_dataset = predict_dataset.map(
+            preprocess_function,
+            with_indices=True,
+            batched=False,
+            # num_proc=data_args.preprocessing_num_workers,
+            # remove_columns=column_names,
+            load_from_cache_file=False,
+            # desc="Running tokenizer on inpainting dataset",
+        )
+        gen_dial_strs = predict_dataset['source']
+        if dataset_name == 'wow':
+            gen_dial_strs = [dial[:dial.rfind('[user-1] [mask] [grounding]')].strip() for dial in gen_dial_strs]
+
+            with open(data_args.test_file, 'r') as f:
+                inp_json = json.load(f)
+            for idx, d in enumerate(inp_json):
+                gen_dial_str = gen_dial_strs[idx]
+                sessions = gen_dial_str.split(' [user-1] ')[1:]
+                u1_utts = [sess.split(' [user-2] ')[0].strip() for sess in sessions]
+                u2_utts = [sess.split(' [user-2] ')[1].strip() for sess in sessions]
+                d['u1_utts'] = u1_utts
+                d['u2_utts'] = u2_utts
+            output_prediction_file = os.path.join(training_args.output_dir, "generated_predictions.json")
+            with open(output_prediction_file, "w") as f:
+                json.dump(inp_json, f, indent=4)
+        elif dataset_name == 'pc':
+            gen_dial_strs = ['[user-1]'.join(dial.split('[user-1]')[:data_args.num_turns//2+1]) for dial in gen_dial_strs]
+
+            sampled_flows = zip(predict_dataset['user_flow'], predict_dataset['agent_flow'])
+            sampled_personas = zip(predict_dataset['user_personas'], predict_dataset['agent_personas'])
+            # merge two flow to one flow (two users take turns)
+            # sampled_flows = [[item for tup in zip(*flow_pair) for item in tup] for flow_pair in sampled_flows]
+
+            pred_dialogues = []
+            for idx, (s, flows, personas) in enumerate(zip(gen_dial_strs, sampled_flows, sampled_personas)):
+                turns = s.split(' [user-1] ')
+                turns = turns[1:]
+                assert len(turns) == 8
+                user_utterances = [turn.split(' [user-2] ')[0] for turn in turns]
+                agent_utterances = [turn.split(' [user-2] ')[1] for turn in turns]
+                dial_dict = {
+                    "u1_utts": user_utterances,
+                    "u2_utts": agent_utterances,
+                    "u1_flows": flows[0],
+                    "u2_flows": flows[1],
+                    "u1_personas": personas[0],
+                    "u2_personas": personas[1],
+                }
+                pred_dialogues.append(dial_dict)
+            output_prediction_file = os.path.join(training_args.output_dir, "generated_dials.json")
+            with open(output_prediction_file, 'w') as f:
+                json.dump(pred_dialogues, f, indent=2)
+            
+            import nltk
+            MAX_DIAL_NUM = -1
+            output_formatted_file = os.path.join(training_args.output_dir, "gen_train_self_original.txt")
+            with open(output_formatted_file, 'w') as fp:
+                for i, d in enumerate(pred_dialogues):
+                    idx = 1
+                    for persona in d['u2_personas'].split(' | '):
+                        fp.write(f'{idx} your persona: {persona}\n')
+                        idx += 1
+                    for user_utt, agent_utt in zip(d['u1_utts'], d['u2_utts']):
+                        user_utt = ' '.join(nltk.word_tokenize(user_utt))
+                        agent_utt = ' '.join(nltk.word_tokenize(agent_utt))
+                        fp.write(f'{idx} {user_utt}\t{agent_utt}\t\tNone\n')
+                        idx += 1
+                    if i == MAX_DIAL_NUM-1:
+                        break
+        else:
+            raise ValueError(f"Dataset {dataset_name} not supported")
 
     return results
 
