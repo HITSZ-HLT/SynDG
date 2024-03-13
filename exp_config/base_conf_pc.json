@@ -1,5 +1,5 @@
 {
-  "model_name_or_path": "/data/baojianzhu/workspace/data/t5-large",
+  "model_name_or_path": "t5-large",
   "cache_dir": "cache",
   "train_file": "pc_full_training_inp_data/train.json",
   "validation_file": "pc_full_training_inp_data/valid.json",
